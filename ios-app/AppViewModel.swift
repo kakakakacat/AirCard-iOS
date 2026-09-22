@@ -308,15 +308,19 @@ final class AppViewModel: ObservableObject {
     @Published var isScanningCards: Bool = false
     @Published var scanStatusText: String = ""
     private var activeCardScanID: UUID?
+    private var pendingCardCandidate: String?
+    private var pendingCardCandidateWorkItem: DispatchWorkItem?
 
-    nonisolated static let cardRegexes: [NSRegularExpression] = [
-        try! NSRegularExpression(pattern: "/(?:Cards|Passes/Cards)/([-A-Za-z0-9_+=]{20,64})(?:\\.pkpass|\\.cache|\\.pkcache|/|\\s|\"|'|\\)|,|$)", options: .caseInsensitive),
-        try! NSRegularExpression(pattern: "/([-A-Za-z0-9_+=]{20,64})\\.(?:pkpass|cache|pkcache)", options: .caseInsensitive),
-        try! NSRegularExpression(pattern: "(?<![A-Za-z0-9+/_-])([A-Za-z0-9+/_-]{27}=?)(?![A-Za-z0-9+/_=-])"),
-        try! NSRegularExpression(pattern: #"PDCardFileManager:\s*(?:writing|loading|reading)\s+card\s+([A-Za-z0-9+/_-]{20,64}={0,2})(?=\s|\)|,|$)"#, options: .caseInsensitive),
-        try! NSRegularExpression(pattern: #"PDPassLibrary:\s*(?:wrote|loaded|reading)\s+pass\s+([A-Za-z0-9+/_-]{20,64}={0,2})(?=\s|\)|,|$)"#, options: .caseInsensitive),
-        try! NSRegularExpression(pattern: #"VerificationCheck\.([A-Za-z0-9+/_-]{20,64}={0,2})(?=\s|\)|,|$)"#, options: .caseInsensitive),
-        try! NSRegularExpression(pattern: #"(?:uniqueID|unique_id|cardUniqueIdentifier|cardIdentifier|cardID|passUniqueID|passIdentifier)[\"']?\s*(?:=|:)\s*[\"']?([A-Za-z0-9+/_-]{20,64}={0,2})"#, options: .caseInsensitive)
+    nonisolated static let authoritativeCardRegexes: [NSRegularExpression] = [
+        try! NSRegularExpression(pattern: "/(?:Cards|Passes/Cards)/([-A-Za-z0-9_+=]{20,44})(?:\\.pkpass|\\.cache|\\.pkcache|/|\\s|\"|'|\\)|,|$)", options: .caseInsensitive),
+        try! NSRegularExpression(pattern: "/([-A-Za-z0-9_+=]{20,44})\\.(?:pkpass|cache|pkcache)", options: .caseInsensitive),
+        try! NSRegularExpression(pattern: #"PDCardFileManager:\s*writing\s+card\s+([A-Za-z0-9+/_-]{20,44}={0,2})(?=\s|\)|,|$)"#, options: .caseInsensitive),
+        try! NSRegularExpression(pattern: #"PDPassLibrary:\s*wrote\s+pass\s+([A-Za-z0-9+/_-]{20,44}={0,2})(?=\s|\)|,|$)"#, options: .caseInsensitive),
+        try! NSRegularExpression(pattern: #"VerificationCheck\.([A-Za-z0-9+/_-]{20,44}={0,2})(?=\s|\)|,|$)"#, options: .caseInsensitive)
+    ]
+
+    nonisolated static let fallbackCardRegexes: [NSRegularExpression] = [
+        try! NSRegularExpression(pattern: "(?<![A-Za-z0-9+/_-])([A-Za-z0-9+/_-]{27}=)(?![A-Za-z0-9+/_-])")
     ]
 
 
@@ -348,6 +352,9 @@ final class AppViewModel: ObservableObject {
 
         let scanID = UUID()
         activeCardScanID = scanID
+        pendingCardCandidate = nil
+        pendingCardCandidateWorkItem?.cancel()
+        pendingCardCandidateWorkItem = nil
 
         var t = Transaction()
         t.disablesAnimations = true
@@ -368,9 +375,12 @@ final class AppViewModel: ObservableObject {
                     { _, line in
                         guard let line = line else { return }
                         let lineStr = String(cString: line)
-                        if let cardID = AppViewModel.cardID(fromSyslogLine: lineStr) {
+                        if let match = AppViewModel.cardMatch(fromSyslogLine: lineStr) {
                             DispatchQueue.main.async {
-                                AppViewModel.shared?.acceptScannedCard(cardID)
+                                AppViewModel.shared?.receiveScannedCardCandidate(
+                                    match.id,
+                                    authoritative: match.authoritative
+                                )
                             }
                         }
                     },
@@ -406,6 +416,9 @@ final class AppViewModel: ObservableObject {
 
     func stopCardScanning() {
         activeCardScanID = nil
+        pendingCardCandidate = nil
+        pendingCardCandidateWorkItem?.cancel()
+        pendingCardCandidateWorkItem = nil
         al_syslog_stream_stop()
         var t = Transaction()
         t.disablesAnimations = true
@@ -416,7 +429,7 @@ final class AppViewModel: ObservableObject {
         saveCards()
     }
 
-    nonisolated static func cardID(fromSyslogLine line: String) -> String? {
+    nonisolated static func cardMatch(fromSyslogLine line: String) -> (id: String, authoritative: Bool)? {
         let lower = line.lowercased()
         let isWalletSubsystem = lower.contains("passd") ||
                                 lower.contains("passbook") ||
@@ -450,18 +463,57 @@ final class AppViewModel: ObservableObject {
 
         guard isWalletContext else { return nil }
 
-        for regex in Self.cardRegexes {
+        for regex in Self.authoritativeCardRegexes {
             let matches = regex.matches(in: line, range: NSRange(line.startIndex..., in: line))
             for m in matches {
                 if m.numberOfRanges > 1, let r = Range(m.range(at: 1), in: line) {
                     let candidateRaw = String(line[r])
                     guard let candidate = CardItem.cleanCardId(candidateRaw) else { continue }
                     guard !Self.dummyCardHashes.contains(candidate) else { continue }
-                    return candidate
+                    return (candidate, true)
+                }
+            }
+        }
+
+        for regex in Self.fallbackCardRegexes {
+            let matches = regex.matches(in: line, range: NSRange(line.startIndex..., in: line))
+            for m in matches {
+                if m.numberOfRanges > 1, let r = Range(m.range(at: 1), in: line) {
+                    let candidateRaw = String(line[r])
+                    guard let candidate = CardItem.cleanCardId(candidateRaw) else { continue }
+                    guard !Self.dummyCardHashes.contains(candidate) else { continue }
+                    return (candidate, false)
                 }
             }
         }
         return nil
+    }
+
+    private func receiveScannedCardCandidate(_ candidate: String, authoritative: Bool) {
+        guard isScanningCards else { return }
+
+        if authoritative {
+            pendingCardCandidate = nil
+            pendingCardCandidateWorkItem?.cancel()
+            pendingCardCandidateWorkItem = nil
+            acceptScannedCard(candidate)
+            return
+        }
+
+        pendingCardCandidate = candidate
+        pendingCardCandidateWorkItem?.cancel()
+        scanStatusText = "Confirming card: \(candidate)"
+
+        let workItem = DispatchWorkItem { [weak self] in
+            guard let self,
+                  self.isScanningCards,
+                  self.pendingCardCandidate == candidate else { return }
+            self.pendingCardCandidate = nil
+            self.pendingCardCandidateWorkItem = nil
+            self.acceptScannedCard(candidate)
+        }
+        pendingCardCandidateWorkItem = workItem
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.2, execute: workItem)
     }
 
     private func acceptScannedCard(_ candidate: String) {
@@ -474,6 +526,9 @@ final class AppViewModel: ObservableObject {
         saveCards()
 
         activeCardScanID = nil
+        pendingCardCandidate = nil
+        pendingCardCandidateWorkItem?.cancel()
+        pendingCardCandidateWorkItem = nil
         isScanningCards = false
         selectedTab = .walletCards
         scanStatusText = wasAlreadySaved
