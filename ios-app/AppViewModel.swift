@@ -307,15 +307,16 @@ final class AppViewModel: ObservableObject {
 
     @Published var isScanningCards: Bool = false
     @Published var scanStatusText: String = ""
-    private var stopScanningFlag = false
+    private var activeCardScanID: UUID?
 
     nonisolated static let cardRegexes: [NSRegularExpression] = [
-        try! NSRegularExpression(pattern: "/(?:Cards|Passes/Cards)/([-A-Za-z0-9_+=]{20,44})(?:\\.pkpass|\\.cache|\\.pkcache|/|\\s|\"|'|\\)|,|$)"),
-        try! NSRegularExpression(pattern: "/([-A-Za-z0-9_+=]{20,44})\\.(?:pkpass|cache|pkcache)"),
-        try! NSRegularExpression(pattern: "(?<![A-Za-z0-9+/_-])([A-Za-z0-9+/_-]{27}=)(?![A-Za-z0-9+/_-])"),
-        try! NSRegularExpression(pattern: #"PDCardFileManager: writing card\s+([A-Za-z0-9+/_-]+={0,2})(?=\s|\)|,|$)"#),
-        try! NSRegularExpression(pattern: #"PDPassLibrary: wrote pass\s+([A-Za-z0-9+/_-]+={0,2})(?=\s|\)|,|$)"#),
-        try! NSRegularExpression(pattern: #"VerificationCheck\.([A-Za-z0-9+/_-]+={0,2})(?=\s|\)|,|$)"#)
+        try! NSRegularExpression(pattern: "/(?:Cards|Passes/Cards)/([-A-Za-z0-9_+=]{20,64})(?:\\.pkpass|\\.cache|\\.pkcache|/|\\s|\"|'|\\)|,|$)", options: .caseInsensitive),
+        try! NSRegularExpression(pattern: "/([-A-Za-z0-9_+=]{20,64})\\.(?:pkpass|cache|pkcache)", options: .caseInsensitive),
+        try! NSRegularExpression(pattern: "(?<![A-Za-z0-9+/_-])([A-Za-z0-9+/_-]{27}=?)(?![A-Za-z0-9+/_=-])"),
+        try! NSRegularExpression(pattern: #"PDCardFileManager:\s*(?:writing|loading|reading)\s+card\s+([A-Za-z0-9+/_-]{20,64}={0,2})(?=\s|\)|,|$)"#, options: .caseInsensitive),
+        try! NSRegularExpression(pattern: #"PDPassLibrary:\s*(?:wrote|loaded|reading)\s+pass\s+([A-Za-z0-9+/_-]{20,64}={0,2})(?=\s|\)|,|$)"#, options: .caseInsensitive),
+        try! NSRegularExpression(pattern: #"VerificationCheck\.([A-Za-z0-9+/_-]{20,64}={0,2})(?=\s|\)|,|$)"#, options: .caseInsensitive),
+        try! NSRegularExpression(pattern: #"(?:uniqueID|unique_id|cardUniqueIdentifier|cardIdentifier|cardID|passUniqueID|passIdentifier)[\"']?\s*(?:=|:)\s*[\"']?([A-Za-z0-9+/_-]{20,64}={0,2})"#, options: .caseInsensitive)
     ]
 
 
@@ -331,7 +332,7 @@ final class AppViewModel: ObservableObject {
         }
     }
 
-    private static let dummyCardHashes: Set<String> = [
+    nonisolated private static let dummyCardHashes: Set<String> = [
         "OM6NYhwXMZrAw0sRUjR62wmF4ZQ=",
         "M6nDwZrkYbFlsodLgCbvyFZQ1cc=",
         "kJL-D0rr-SZhbj2c8nK-OQ9hCMY=",
@@ -344,6 +345,9 @@ final class AppViewModel: ObservableObject {
             errorMessage = "Pairing file is required before scanning. Pair this iPhone or select a .plist first."
             return
         }
+
+        let scanID = UUID()
+        activeCardScanID = scanID
 
         var t = Transaction()
         t.disablesAnimations = true
@@ -364,16 +368,9 @@ final class AppViewModel: ObservableObject {
                     { _, line in
                         guard let line = line else { return }
                         let lineStr = String(cString: line)
-                        let lower = lineStr.lowercased()
-                        // Pre-filter on background thread to prevent flooding the main runloop
-                        if lower.contains("pass") ||
-                           lower.contains("card") ||
-                           lower.contains("stockholm") ||
-                           lower.contains("wallet") ||
-                           lower.contains("nanopass") ||
-                           lower.contains("verificationcheck") {
+                        if let cardID = AppViewModel.cardID(fromSyslogLine: lineStr) {
                             DispatchQueue.main.async {
-                                AppViewModel.shared?.processSyslogLine(lineStr)
+                                AppViewModel.shared?.acceptScannedCard(cardID)
                             }
                         }
                     },
@@ -387,6 +384,8 @@ final class AppViewModel: ObservableObject {
 
             DispatchQueue.main.async {
                 guard let vm = AppViewModel.shared else { return }
+                guard vm.activeCardScanID == scanID else { return }
+                vm.activeCardScanID = nil
                 vm.isScanningCards = false
                 if rc != 0 {
                     let msg = errStr ?? "rc=\(rc)"
@@ -406,6 +405,7 @@ final class AppViewModel: ObservableObject {
     }
 
     func stopCardScanning() {
+        activeCardScanID = nil
         al_syslog_stream_stop()
         var t = Transaction()
         t.disablesAnimations = true
@@ -416,7 +416,7 @@ final class AppViewModel: ObservableObject {
         saveCards()
     }
 
-    func processSyslogLine(_ line: String) {
+    nonisolated static func cardID(fromSyslogLine line: String) -> String? {
         let lower = line.lowercased()
         let isWalletSubsystem = lower.contains("passd") ||
                                 lower.contains("passbook") ||
@@ -424,12 +424,15 @@ final class AppViewModel: ObservableObject {
                                 lower.contains("stockholm") ||
                                 lower.contains("nanopassd") ||
                                 lower.contains("wallet") ||
+                                lower.contains("applepay") ||
+                                lower.contains("paymentservices") ||
+                                lower.contains("paymentcredential") ||
                                 lower.contains("pdcardfilemanager") ||
                                 lower.contains("pdpasslibrary") ||
                                 lower.contains("verificationcheck") ||
                                 lower.contains("/cards/")
 
-        guard isWalletSubsystem else { return }
+        guard isWalletSubsystem else { return nil }
 
         let isWalletContext = lower.contains("card") ||
                               lower.contains("pass") ||
@@ -445,7 +448,7 @@ final class AppViewModel: ObservableObject {
                               lower.contains("verificationcheck") ||
                               lower.contains("/cards/")
 
-        guard isWalletContext else { return }
+        guard isWalletContext else { return nil }
 
         for regex in Self.cardRegexes {
             let matches = regex.matches(in: line, range: NSRange(line.startIndex..., in: line))
@@ -453,17 +456,32 @@ final class AppViewModel: ObservableObject {
                 if m.numberOfRanges > 1, let r = Range(m.range(at: 1), in: line) {
                     let candidateRaw = String(line[r])
                     guard let candidate = CardItem.cleanCardId(candidateRaw) else { continue }
-                    if Self.dummyCardHashes.contains(candidate) { continue }
-                    if !self.cards.contains(where: { $0.id == candidate }) {
-                        self.cards.append(CardItem(id: candidate, isSelected: true))
-                        self.saveCards()
-                        self.scanStatusText = "Found card: \(candidate)"
-                        self.log.append("Found card: \(candidate)")
-                        UIImpactFeedbackGenerator(style: .heavy).impactOccurred()
-                    }
+                    guard !Self.dummyCardHashes.contains(candidate) else { continue }
+                    return candidate
                 }
             }
         }
+        return nil
+    }
+
+    private func acceptScannedCard(_ candidate: String) {
+        guard isScanningCards, !Self.dummyCardHashes.contains(candidate) else { return }
+
+        let wasAlreadySaved = cards.contains(where: { $0.id == candidate })
+        if !wasAlreadySaved {
+            cards.append(CardItem(id: candidate, isSelected: true))
+        }
+        saveCards()
+
+        activeCardScanID = nil
+        isScanningCards = false
+        selectedTab = .walletCards
+        scanStatusText = wasAlreadySaved
+            ? "Card already saved: \(candidate)"
+            : "Card saved: \(candidate)"
+        log.append(wasAlreadySaved ? "Card already saved: \(candidate)" : "Found and saved card: \(candidate)")
+        UINotificationFeedbackGenerator().notificationOccurred(.success)
+        al_syslog_stream_stop()
     }
 
     nonisolated static func cardImagePath(for cardId: String) -> URL {

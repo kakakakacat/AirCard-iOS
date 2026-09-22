@@ -1227,7 +1227,7 @@ struct WalletCardsTab: View {
                     Text("3.")
                         .bold()
                         .foregroundStyle(.blue)
-                    Text("Your card will appear here automatically!")
+                    Text("The first detected card is saved here automatically, and scanning stops immediately.")
                 }
             }
             .font(.subheadline)
