@@ -567,6 +567,109 @@ final class AppViewModel: ObservableObject {
         try? FileManager.default.removeItem(at: path)
     }
 
+    var canRestoreSelectedCardSkins: Bool {
+        cardFlashPhase != .running &&
+        cards.contains { $0.isSelected && ($0.customImage != nil || $0.customImageData != nil) }
+    }
+
+    func restoreDefaultCardSkin(for cardId: String) {
+        restoreDefaultCardSkins(for: [cardId])
+    }
+
+    func restoreDefaultCardSkinsForSelectedCards() {
+        let selectedIds = cards
+            .filter { $0.isSelected && ($0.customImage != nil || $0.customImageData != nil) }
+            .map(\.id)
+        restoreDefaultCardSkins(for: selectedIds)
+    }
+
+    private func restoreDefaultCardSkins(for cardIds: [String]) {
+        let cleanIds = cardIds.compactMap { CardItem.cleanCardId($0) }
+        guard !cleanIds.isEmpty else { return }
+
+        for id in cleanIds {
+            clearCardImage(for: id)
+        }
+
+        cardFlashPhase = .running
+        cardFlashProgress = 0
+        cardFlashLog.removeAll()
+        errorMessage = nil
+        cardFlashLog.append("Restoring default skin for \(cleanIds.count) card(s)...")
+
+        guard hasPairingFile else {
+            cardFlashPhase = .done(ok: true)
+            cardFlashProgress = 1.0
+            cardFlashLog.append("✅ Local custom skin removed. Pair this iPhone to refresh Wallet caches on-device.")
+            successAlertMessage = "Local custom skin removed.\n\nPair this iPhone and run Restore Default again to refresh Wallet caches on-device."
+            showSuccessAlert = true
+            return
+        }
+
+        if !vpnUp {
+            cardFlashLog.append("⚠️ Notice: Loopback VPN not detected, attempting direct loopback (127.0.0.1)...")
+        }
+
+        let pairingPath = PairingController.pairingFilePath()
+
+        Task.detached { [weak self] in
+            guard let self = self else { return }
+            let total = Double(cleanIds.count)
+            var successCount = 0
+
+            for (i, cleanId) in cleanIds.enumerated() {
+                await MainActor.run {
+                    self.cardFlashLog.append("[\(i + 1)/\(cleanIds.count)] Invalidating cache for \(cleanId.prefix(12))...")
+                    self.cardFlashProgress = Double(i) / total
+                }
+
+                let stageInvDir = FileManager.default.temporaryDirectory
+                    .appendingPathComponent("airlift_restore_inv_\(UUID().uuidString)")
+                try? FileManager.default.createDirectory(at: stageInvDir, withIntermediateDirectories: true)
+                for leaf in ["FrontFace", "Preview", "PlaceHolder"] {
+                    try? Data("corrupted".utf8).write(to: stageInvDir.appendingPathComponent(leaf))
+                }
+
+                for ext in [".cache", ".pkcache"] {
+                    let cacheTarget = "/var/mobile/Library/Passes/Cards/\(cleanId)\(ext)"
+                    await withCheckedContinuation { cont in
+                        DispatchQueue.global(qos: .userInitiated).async {
+                            var outError: UnsafeMutablePointer<CChar>? = nil
+                            _ = pairingPath.withCString { pairC in
+                                stageInvDir.path.withCString { srcC in
+                                    cacheTarget.withCString { tgtC in
+                                        al_exploit_write_dir(pairC, srcC, tgtC, nil, nil, &outError)
+                                    }
+                                }
+                            }
+                            if let p = outError { al_string_free(p) }
+                            cont.resume()
+                        }
+                    }
+                }
+                try? FileManager.default.removeItem(at: stageInvDir)
+
+                successCount += 1
+                await MainActor.run {
+                    self.cardFlashLog.append("  ✅ Wallet cache invalidated")
+                    self.cardFlashProgress = Double(i + 1) / total
+                }
+            }
+
+            await MainActor.run {
+                self.cardFlashProgress = 1.0
+                self.cardFlashPhase = .done(ok: successCount > 0)
+                if successCount > 0 {
+                    self.cardFlashLog.append("🎉 Restore requested for \(successCount)/\(cleanIds.count) card(s). Force-close Wallet app to see the default cover.")
+                    self.successAlertMessage = "Default cover restore requested for \(successCount) card(s).\n\nPlease force-close Wallet (or reboot) to reload the card cover."
+                    self.showSuccessAlert = true
+                } else {
+                    self.cardFlashLog.append("❌ Restore failed. Check connection and try again.")
+                }
+            }
+        }
+    }
+
     func setCardImage(for cardId: String, image: UIImage) {
         guard let idx = cards.firstIndex(where: { $0.id == cardId }) else { return }
         // Keep a lightweight thumbnail in memory for responsive UI & OOM protection
