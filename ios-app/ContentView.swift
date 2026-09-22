@@ -749,9 +749,9 @@ struct WalletCardView: View {
                             )
                             .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
 
-                            // Top Right Remove Button
+                            // Top Right Restore Button
                             Button(action: onClearImage) {
-                                Image(systemName: "xmark.circle.fill")
+                                Image(systemName: "arrow.uturn.backward.circle.fill")
                                     .font(.system(size: 24))
                                     .foregroundStyle(.white.opacity(0.95))
                                     .background(Circle().fill(Color.black.opacity(0.55)))
@@ -958,6 +958,13 @@ struct WalletCardsTab: View {
                                 Label("Set Skin for All Cards...", systemImage: "photo.on.rectangle.angled")
                             }
 
+                            Button {
+                                vm.restoreDefaultCardSkinsForSelectedCards()
+                            } label: {
+                                Label("Restore Default for Selected", systemImage: "arrow.uturn.backward.circle")
+                            }
+                            .disabled(!vm.canRestoreSelectedCardSkins)
+
                             Divider()
 
                             Button {
@@ -1131,7 +1138,7 @@ struct WalletCardsTab: View {
                         activePicker = .singleCard(card.id)
                         showSourceDialog = true
                     },
-                    onClearImage: { vm.clearCardImage(for: card.id) },
+                    onClearImage: { vm.restoreDefaultCardSkin(for: card.id) },
                     onDelete: {
                         UIImpactFeedbackGenerator(style: .medium).impactOccurred()
                         vm.deleteCard(id: card.id)
