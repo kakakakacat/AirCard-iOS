@@ -1157,32 +1157,46 @@ final class AppViewModel: ObservableObject {
                     self.cardFlashLog.append("  ✅ Target bytes verified! Invalidating pass cache…")
                 }
 
-                // 2. Invalidate cache leaves (best effort: some iOS versions don't have .cache or .pkcache folders)
-                let stageInvDir = FileManager.default.temporaryDirectory
-                    .appendingPathComponent("airlift_inv_\(UUID().uuidString)")
-                try? FileManager.default.createDirectory(at: stageInvDir, withIntermediateDirectories: true)
-                for leaf in ["FrontFace", "Preview", "PlaceHolder"] {
-                    try? Data("corrupted".utf8).write(to: stageInvDir.appendingPathComponent(leaf))
-                }
-
+                // 2. Match macOS AirCard: move each rendered face out of the
+                // protected cache, then delete the moved staging tree. This is
+                // a real unlink; overwriting with junk leaves stale artwork on
+                // affected iOS versions.
+                var cachesRemoved = true
                 for ext in [".cache", ".pkcache"] {
                     let cacheTarget = "/var/mobile/Library/Passes/Cards/\(cleanId)\(ext)"
-                    await withCheckedContinuation { cont in
+                    let removal: (Bool, String?) = await withCheckedContinuation { cont in
                         DispatchQueue.global(qos: .userInitiated).async {
                             var outError: UnsafeMutablePointer<CChar>? = nil
-                            _ = pairingPath.withCString { pairC in
-                                stageInvDir.path.withCString { srcC in
-                                    cacheTarget.withCString { tgtC in
-                                        al_exploit_write_dir(pairC, srcC, tgtC, nil, nil, &outError)
+                            let rc = pairingPath.withCString { pairC in
+                                cacheTarget.withCString { targetC in
+                                    "FrontFace,PlaceHolder,Preview".withCString { leavesC in
+                                        al_exploit_remove_files(pairC, targetC, leavesC, nil, nil, &outError)
                                     }
                                 }
                             }
-                            if let p = outError { al_string_free(p) }
-                            cont.resume()
+                            var message: String? = nil
+                            if let p = outError {
+                                message = String(validatingUTF8: p)
+                                al_string_free(p)
+                            }
+                            cont.resume(returning: (rc == 0, message))
+                        }
+                    }
+                    if !removal.0 {
+                        cachesRemoved = false
+                        await MainActor.run {
+                            let detail = removal.1 ?? "AirTraffic remove failed"
+                            self.cardFlashLog.append("  ❌ Could not clear \(ext): \(detail)")
                         }
                     }
                 }
-                try? FileManager.default.removeItem(at: stageInvDir)
+
+                guard cachesRemoved else {
+                    await MainActor.run {
+                        self.cardFlashLog.append("  ❌ Artwork was written, but Wallet cache removal failed")
+                    }
+                    continue
+                }
 
                 successCount += 1
                 await MainActor.run {

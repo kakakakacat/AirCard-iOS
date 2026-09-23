@@ -20,6 +20,8 @@ jobs:
         run: brew install xcodegen
       - name: Verify scanner parity with original main
         run: python3 tests/verify_scanner.py
+      - name: Verify macOS Wallet flash parity
+        run: python3 tests/verify_card_flash.py
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
         with:

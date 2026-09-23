@@ -98,6 +98,13 @@ int32_t al_exploit_write_dir(const char *pairing_path,
                              void *ctx,
                              char **out_error);
 
+int32_t al_exploit_remove_files(const char *pairing_path,
+                                const char *target_dir,
+                                const char *leaves_csv,
+                                ALLogCallback log_cb,
+                                void *ctx,
+                                char **out_error);
+
 // Inject an entire directory `folder_path` into `target_parent_dir/dest_name` on the device.
 // Preserves complete folder hierarchy and all internal assets in one AirTraffic operation.
 // Returns 0 on success, 1 on error (with out_error set).

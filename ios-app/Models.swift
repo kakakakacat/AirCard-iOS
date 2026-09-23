@@ -271,39 +271,26 @@ enum ImageEngine {
         return resizeImage(normalized, targetSize: CGSize(width: 1536, height: 969))
     }
 
-    /// Prepares all exact resolution files for Apple Wallet pass skins.
-    /// Perfectly fits standard, Plus, Pro, and Pro Max screens.
-    /// Emits cardBackgroundCombined, diffuse, background, and strip so all Apple Pay passes are covered.
+    /// Match the verified macOS AirCard pipeline exactly: one 1536×969 crop is
+    /// reused for both PNG scale names, plus a PDF containing the same artwork.
     static func prepareAllCardSkins(from image: UIImage) -> [String: Data] {
         let normalized = normalizeAndDownsample(image, maxDimension: 2560)
-        var skins: [String: Data] = [:]
+        let targetSize = CGSize(width: 1536, height: 969)
+        guard let pngData = resizeImage(normalized, targetSize: targetSize),
+              let preparedImage = UIImage(data: pngData) else { return [:] }
 
-        let bg3x = resizeImage(normalized, targetSize: CGSize(width: 1536, height: 969))
-        let bg2x = resizeImage(normalized, targetSize: CGSize(width: 1024, height: 646))
+        var skins: [String: Data] = [
+            "cardBackgroundCombined@3x.png": pngData,
+            "cardBackgroundCombined@2x.png": pngData,
+        ]
 
-        if let data3x = bg3x {
-            skins["cardBackgroundCombined@3x.png"] = data3x
-            skins["diffuse@3x.png"] = data3x
-            skins["background@3x.png"] = data3x
-            skins["strip@3x.png"] = data3x
-        }
-        if let data2x = bg2x {
-            skins["cardBackgroundCombined@2x.png"] = data2x
-            skins["diffuse@2x.png"] = data2x
-            skins["background@2x.png"] = data2x
-            skins["strip@2x.png"] = data2x
-        }
-
-        // Vector PDF variants for Suica, Pasmo, ICOCA, and transit/transport passes
-        let pdfRect = CGRect(origin: .zero, size: CGSize(width: 1536, height: 969))
+        let pdfRect = CGRect(origin: .zero, size: targetSize)
         let pdfRenderer = UIGraphicsPDFRenderer(bounds: pdfRect)
         let pdfData = pdfRenderer.pdfData { ctx in
             ctx.beginPage()
-            normalized.draw(in: pdfRect)
+            preparedImage.draw(in: pdfRect)
         }
         skins["cardBackgroundCombined.pdf"] = pdfData
-        skins["background.pdf"] = pdfData
-        skins["strip.pdf"] = pdfData
 
         return skins
     }

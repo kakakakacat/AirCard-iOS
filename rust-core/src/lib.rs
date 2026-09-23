@@ -175,6 +175,39 @@ pub unsafe extern "C" fn al_exploit_write_dir(
     }
 }
 
+/// Really unlink protected files by moving them into an AirTraffic staging
+/// directory and deleting that directory. `leaves_csv` contains plain file
+/// names separated by commas.
+#[no_mangle]
+pub unsafe extern "C" fn al_exploit_remove_files(
+    pairing_path: *const c_char,
+    target_dir: *const c_char,
+    leaves_csv: *const c_char,
+    log_cb: exploit::ALLogCallback,
+    ctx: *mut c_void,
+    out_error: *mut *mut c_char,
+) -> i32 {
+    let res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        exploit::remove_files(
+            pairing_path,
+            target_dir,
+            leaves_csv,
+            log_cb,
+            ctx,
+            out_error,
+        )
+    }));
+    match res {
+        Ok(rc) => rc,
+        Err(e) => {
+            if !out_error.is_null() {
+                *out_error = ffi_util::cstr(format!("Rust panic in al_exploit_remove_files: {e:?}"));
+            }
+            1
+        }
+    }
+}
+
 /// Inject an entire directory `folder_path` into `target_parent_dir/dest_name` outside the sandbox via AirTraffic exploit.
 ///
 /// # Safety
