@@ -20,6 +20,8 @@ jobs:
         run: brew install xcodegen
       - name: Verify scanner parity with original main
         run: python3 tests/verify_scanner.py
+      - name: Verify card scanning never moves Wallet files
+        run: python3 tests/verify_safe_scanner.py
       - name: Verify macOS Wallet flash parity
         run: python3 tests/verify_card_flash.py
       - name: Verify AirTraffic reads restore source files
@@ -42,6 +44,6 @@ jobs:
           ./build-ipa.sh Release
       - uses: actions/upload-artifact@v4
         with:
-          name: AirCard-iOS-wallet-db-v1-unsigned
+          name: AirCard-iOS-safe-os-trace-unsigned
           path: build/AirCard-iOS.ipa
           if-no-files-found: error

@@ -1216,19 +1216,19 @@ struct WalletCardsTab: View {
                     Text("1.")
                         .bold()
                         .foregroundStyle(.blue)
-                    Text("Tap **Scan Cards**. AirCard will first read and verify Wallet metadata automatically.")
+                    Text("Tap **Scan Cards** to connect to the non-destructive live activity stream.")
                 }
                 HStack(alignment: .top, spacing: 10) {
                     Text("2.")
                         .bold()
                         .foregroundStyle(.blue)
-                    Text("Only if metadata access fails, double-click the Side button, authenticate, and tap the card for the legacy log scanner.")
+                    Text("Double-click the Side button, authenticate, then open or tap the card you want to detect.")
                 }
                 HStack(alignment: .top, spacing: 10) {
                     Text("3.")
                         .bold()
                         .foregroundStyle(.blue)
-                    Text("Verified cards are saved here automatically; no repeated scan is required.")
+                    Text("Detected card identifiers are saved automatically. Wallet files are never read or moved.")
                 }
             }
             .font(.subheadline)
