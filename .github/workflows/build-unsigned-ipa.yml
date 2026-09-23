@@ -22,6 +22,8 @@ jobs:
         run: python3 tests/verify_scanner.py
       - name: Verify macOS Wallet flash parity
         run: python3 tests/verify_card_flash.py
+      - name: Verify AirTraffic reads restore source files
+        run: python3 tests/verify_read_restore.py
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
         with:
