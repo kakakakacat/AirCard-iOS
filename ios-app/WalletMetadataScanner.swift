@@ -108,8 +108,16 @@ enum WalletMetadataScanner {
     /// 28-character padded Base64/Base64URL strings. Rejecting UUIDs and broad
     /// semantic identifiers prevents a successful write to the wrong folder.
     private static func normalizedDirectoryID(_ raw: String) -> String? {
-        guard let cleaned = CardItem.cleanCardId(raw), cleaned.utf8.count == 28,
-              cleaned.hasSuffix("=") else { return nil }
+        var cleaned = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        cleaned = cleaned.trimmingCharacters(in: CharacterSet(charactersIn: "'\",()<>;[]{}"))
+        if cleaned.contains("/") {
+            cleaned = (cleaned as NSString).lastPathComponent
+        }
+        for suffix in [".pkpass", ".cache", ".pkcache"] where cleaned.hasSuffix(suffix) {
+            cleaned.removeLast(suffix.count)
+        }
+        cleaned = cleaned.trimmingCharacters(in: CharacterSet(charactersIn: "'\",()<>;[]{}. "))
+        guard cleaned.utf8.count == 28, cleaned.hasSuffix("=") else { return nil }
         let body = cleaned.dropLast()
         let allowed = CharacterSet(charactersIn: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+_-")
         guard body.unicodeScalars.allSatisfy({ allowed.contains($0) }) else { return nil }

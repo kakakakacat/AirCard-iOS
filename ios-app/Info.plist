@@ -36,8 +36,6 @@
 	</array>
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>AirCard-iOS advertises an on-device pairing service so this iPhone can pair with itself, and connects to the local lockdown daemon to run the exploit.</string>
-	<key>NSPhotoLibraryUsageDescription</key>
-	<string>AirCard-iOS needs photo access to apply custom card skins and passcode themes.</string>
 	<!-- Background: audio keeps the app alive while the user approves the PIN -->
 	<key>UIBackgroundModes</key>
 	<array>
@@ -59,18 +57,6 @@
 	<array>
 		<dict>
 			<key>CFBundleTypeName</key>
-			<string>Passcode Theme</string>
-			<key>CFBundleTypeRole</key>
-			<string>Viewer</string>
-			<key>LSHandlerRank</key>
-			<string>Owner</string>
-			<key>LSItemContentTypes</key>
-			<array>
-				<string>com.aircard.passthm</string>
-			</array>
-		</dict>
-		<dict>
-			<key>CFBundleTypeName</key>
 			<string>Pairing File</string>
 			<key>CFBundleTypeRole</key>
 			<string>Viewer</string>
@@ -80,98 +66,6 @@
 			<array>
 				<string>com.apple.property-list</string>
 			</array>
-		</dict>
-		<dict>
-			<key>CFBundleTypeName</key>
-			<string>PosterBoard Wallpaper</string>
-			<key>CFBundleTypeRole</key>
-			<string>Viewer</string>
-			<key>LSHandlerRank</key>
-			<string>Owner</string>
-			<key>LSItemContentTypes</key>
-			<array>
-				<string>com.aircard.tendies</string>
-			</array>
-		</dict>
-	</array>
-	<key>UTImportedTypeDeclarations</key>
-	<array>
-		<dict>
-			<key>UTTypeIdentifier</key>
-			<string>com.aircard.passthm</string>
-			<key>UTTypeDescription</key>
-			<string>Passcode Theme Archive</string>
-			<key>UTTypeConformsTo</key>
-			<array>
-				<string>public.data</string>
-				<string>public.archive</string>
-			</array>
-			<key>UTTypeTagSpecification</key>
-			<dict>
-				<key>public.filename-extension</key>
-				<array>
-					<string>passthm</string>
-				</array>
-			</dict>
-		</dict>
-		<dict>
-			<key>UTTypeIdentifier</key>
-			<string>com.aircard.tendies</string>
-			<key>UTTypeDescription</key>
-			<string>PosterBoard Wallpaper Archive</string>
-			<key>UTTypeConformsTo</key>
-			<array>
-				<string>public.data</string>
-				<string>public.archive</string>
-				<string>public.zip-archive</string>
-			</array>
-			<key>UTTypeTagSpecification</key>
-			<dict>
-				<key>public.filename-extension</key>
-				<array>
-					<string>tendies</string>
-				</array>
-			</dict>
-		</dict>
-	</array>
-	<key>UTExportedTypeDeclarations</key>
-	<array>
-		<dict>
-			<key>UTTypeIdentifier</key>
-			<string>com.aircard.tendies</string>
-			<key>UTTypeDescription</key>
-			<string>PosterBoard Wallpaper Archive</string>
-			<key>UTTypeConformsTo</key>
-			<array>
-				<string>public.data</string>
-				<string>public.archive</string>
-				<string>public.zip-archive</string>
-			</array>
-			<key>UTTypeTagSpecification</key>
-			<dict>
-				<key>public.filename-extension</key>
-				<array>
-					<string>tendies</string>
-				</array>
-			</dict>
-		</dict>
-		<dict>
-			<key>UTTypeIdentifier</key>
-			<string>com.aircard.passthm</string>
-			<key>UTTypeDescription</key>
-			<string>Passcode Theme Archive</string>
-			<key>UTTypeConformsTo</key>
-			<array>
-				<string>public.data</string>
-				<string>public.archive</string>
-			</array>
-			<key>UTTypeTagSpecification</key>
-			<dict>
-				<key>public.filename-extension</key>
-				<array>
-					<string>passthm</string>
-				</array>
-			</dict>
 		</dict>
 	</array>
 </dict>

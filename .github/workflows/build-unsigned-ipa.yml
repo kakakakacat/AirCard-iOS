@@ -3,8 +3,13 @@ name: Build Unsigned IPA
 on:
   push:
     branches:
-      - scan-from-main
+      - main
+    paths-ignore:
+      - 'release/**'
   workflow_dispatch:
+
+permissions:
+  contents: write
 
 jobs:
   build:
@@ -18,10 +23,8 @@ jobs:
         run: sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
       - name: Install XcodeGen
         run: brew install xcodegen
-      - name: Verify scanner parity with original main
-        run: python3 tests/verify_scanner.py
-      - name: Verify macOS Wallet flash parity
-        run: python3 tests/verify_card_flash.py
+      - name: Verify scanner-only bilingual release
+        run: python3 tests/verify_scanner_only_release.py
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
         with:
@@ -38,8 +41,20 @@ jobs:
         run: |
           chmod +x ./build-ipa.sh
           ./build-ipa.sh Release
+          mkdir -p release
+          cp build/AirCard-iOS.ipa release/AirCard-Hash-Scanner.ipa
+          shasum -a 256 release/AirCard-Hash-Scanner.ipa > release/AirCard-Hash-Scanner.ipa.sha256
+      - name: Save IPA in release directory
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -f release/AirCard-Hash-Scanner.ipa release/AirCard-Hash-Scanner.ipa.sha256
+          if ! git diff --cached --quiet; then
+            git commit -m "Add hash scanner IPA [skip ci]"
+            git push origin HEAD:main
+          fi
       - uses: actions/upload-artifact@v4
         with:
-          name: AirCard-iOS-wallet-db-v1-unsigned
-          path: build/AirCard-iOS.ipa
+          name: AirCard-Hash-Scanner-unsigned
+          path: release/AirCard-Hash-Scanner.ipa
           if-no-files-found: error
