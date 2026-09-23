@@ -14,6 +14,7 @@ pub mod ffi_util;
 pub mod grappa;
 pub mod logging;
 pub mod pairing;
+mod scan_diagnostics;
 
 // Re-export idevice-ffi's symbols into our staticlib (tunnel_create_rppairing,
 // afc_*, rsd_*, adapter_*, etc.) so Swift can call them directly.

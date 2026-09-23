@@ -225,13 +225,20 @@ impl Idevice {
     /// # Errors
     /// Returns `IdeviceError` if the protocol sequence isn't followed correctly
     pub async fn rsd_checkin(&mut self) -> Result<(), IdeviceError> {
+        self.rsd_checkin_with_diagnostics(false).await
+    }
+
+    /// Same handshake, with payload-free progress events for AirCard's scanner.
+    pub async fn rsd_checkin_with_diagnostics(&mut self, scan_diag: bool) -> Result<(), IdeviceError> {
         let req = plist!({
             "Label": self.label.clone(),
             "ProtocolVersion": "2",
             "Request": "RSDCheckin",
         });
 
+        if scan_diag { tracing::info!("[ScanDiag] stage=rsd_checkin event=send_request"); }
         self.send_plist(req).await?;
+        if scan_diag { tracing::info!("[ScanDiag] stage=rsd_checkin event=wait_checkin_reply"); }
         let res = self.read_plist().await?;
         match res.get("Request").and_then(|x| x.as_string()) {
             Some(r) => {
@@ -248,6 +255,8 @@ impl Idevice {
             }
         }
 
+        if scan_diag { tracing::info!("[ScanDiag] stage=rsd_checkin event=checkin_reply_ok"); }
+        if scan_diag { tracing::info!("[ScanDiag] stage=rsd_checkin event=wait_start_service_reply"); }
         let res = self.read_plist().await?;
         match res.get("Request").and_then(|x| x.as_string()) {
             Some(r) => {
@@ -258,12 +267,13 @@ impl Idevice {
                 }
             }
             None => {
-                return Err(IdeviceError::UnexpectedResponse(
-                    "missing Request field in StartService response".to_string(),
-                ));
+                    return Err(IdeviceError::UnexpectedResponse(
+                        "missing Request field in StartService response".to_string(),
+                    ));
             }
         }
 
+        if scan_diag { tracing::info!("[ScanDiag] stage=rsd_checkin event=start_service_reply_ok"); }
         Ok(())
     }
 

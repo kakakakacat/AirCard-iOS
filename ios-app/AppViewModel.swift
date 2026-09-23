@@ -4,10 +4,32 @@ import SwiftUI
 import AirliftFFI
 
 // Callback state is accessed only by the syslog worker; UI work uses its immutable ID.
-private final class CardScanContext {
+// Mutable fields stay on the single scanner worker. Only value snapshots cross to MainActor.
+final class CardScanContext: @unchecked Sendable {
     let id = UUID()
     var receivedLine = false
     var deliveredCard = false
+    var total = 0
+    var prefiltered = 0
+    var wallet = 0
+    var walletContext = 0
+    var privateWallet = 0
+    var candidates = 0
+    var invalid = 0
+    var dummy = 0
+    var normalized = 0
+    var matches = 0
+    var matchedRule = 0
+    var lastReport = ProcessInfo.processInfo.systemUptime
+    var sampledSignatures: Set<String> = []
+
+    var summary: String {
+        "[ScanDiag] session=\(id.uuidString.prefix(8)) stage=parser total=\(total) prefilter=\(prefiltered) wallet=\(wallet) context=\(walletContext) private=\(privateWallet) candidates=\(candidates) invalid=\(invalid) dummy=\(dummy) normalized=\(normalized) matches=\(matches) rule=\(matchedRule)"
+    }
+
+    var status: String {
+        "日志 \(total) · 钱包 \(wallet) · 隐私标记 \(privateWallet) · 匹配 \(matches)"
+    }
 }
 
 // MARK: - AppViewModel
@@ -129,6 +151,7 @@ final class AppViewModel: ObservableObject {
         // Hook Rust log output into our log array.
         AppViewModel.sharedLogSink = { [weak self] line in
             self?.log.append(line)
+            self?.updateScannerStage(from: line)
         }
     }
 
@@ -317,6 +340,7 @@ final class AppViewModel: ObservableObject {
     private var activeCardScanID: UUID?
     private var cardScanWorkerRunning = false
     private var cardScanBackgroundTask: UIBackgroundTaskIdentifier = .invalid
+    private var cardScanLifecycleObservers: [NSObjectProtocol] = []
 
     nonisolated static let cardRegexes: [NSRegularExpression] = [
         try! NSRegularExpression(pattern: "/(?:Cards|Passes/Cards)/([-A-Za-z0-9_+=]{20,44})(?:\\.pkpass|\\.cache|\\.pkcache|/|\\s|\"|'|\\)|,|$)"),
@@ -362,7 +386,21 @@ final class AppViewModel: ObservableObject {
         let scanID = context.id
         activeCardScanID = scanID
         cardScanWorkerRunning = true
+        if cardScanLifecycleObservers.isEmpty {
+            for name in [UIApplication.didEnterBackgroundNotification, UIApplication.willEnterForegroundNotification,
+                         UIApplication.willResignActiveNotification, UIApplication.didBecomeActiveNotification] {
+                let observer = NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main) { [weak self] notification in
+                    let event = notification.name.rawValue
+                    Task { @MainActor [weak self] in
+                        guard let self, self.cardScanWorkerRunning else { return }
+                        self.log.append("[ScanDiag] stage=lifecycle event=\(event) background_remaining=\(UIApplication.shared.backgroundTimeRemaining)")
+                    }
+                }
+                cardScanLifecycleObservers.append(observer)
+            }
+        }
         cardScanBackgroundTask = UIApplication.shared.beginBackgroundTask(withName: "Wallet card scan") { [weak self] in
+            self?.log.append("[ScanDiag] stage=lifecycle event=background_time_expired")
             self?.stopCardScanning()
             self?.scanStatusText = "Background scan time expired. Return to AirCard and scan again."
         }
@@ -374,6 +412,7 @@ final class AppViewModel: ObservableObject {
             scanStatusText = "Connecting to device logs..."
         }
         log.append("Started live card scanner…")
+        log.append("[ScanDiag] build=scan-diag-v1 session=\(scanID.uuidString.prefix(8)) stage=ui event=start ios=\(UIDevice.current.systemVersion) saved_cards=\(cards.count) background_granted=\(cardScanBackgroundTask != .invalid)")
 
         let pairingPath = PairingController.pairingFilePath()
 
@@ -389,12 +428,14 @@ final class AppViewModel: ObservableObject {
                         guard let rawContext, let line else { return }
                         let context = Unmanaged<CardScanContext>.fromOpaque(rawContext).takeUnretainedValue()
                         let scanID = context.id
+                        context.total += 1
                         if !context.receivedLine {
                             context.receivedLine = true
                             DispatchQueue.main.async {
                                 guard let vm = AppViewModel.shared,
                                       vm.activeCardScanID == scanID else { return }
                                 vm.scanStatusText = "Logs connected. Open Apple Pay and tap your card."
+                                vm.log.append("[ScanDiag] stage=swift_callback event=first_line")
                             }
                         }
                         guard !context.deliveredCard else { return }
@@ -407,11 +448,34 @@ final class AppViewModel: ObservableObject {
                            lower.contains("wallet") ||
                            lower.contains("nanopass") ||
                            lower.contains("verificationcheck") {
-                            if let candidate = AppViewModel.firstCardID(in: lineStr) {
+                            context.prefiltered += 1
+                            if let candidate = AppViewModel.firstCardID(in: lineStr, diagnostics: context) {
                                 context.deliveredCard = true
+                                let summary = context.summary
                                 DispatchQueue.main.async {
+                                    AppViewModel.shared?.log.append(summary)
                                     AppViewModel.shared?.acceptScannedCard(candidate, scanID: scanID)
                                 }
+                            }
+                        }
+                        // Log only structural markers, never raw Wallet lines/card numbers.
+                        if lower.contains("passkit") || lower.contains("passd") || lower.contains("wallet") || lower.contains("passbook") || lower.contains("stockholm") {
+                            let markers = ["passd", "passkit", "passbook", "wallet", "stockholm", "uniqueid", "identifier", "<private>", "/cards/", ".pkpass", "verificationcheck", "writing card", "wrote pass"]
+                                .filter { lower.contains($0) }.joined(separator: ",")
+                            if context.sampledSignatures.count < 12 && context.sampledSignatures.insert(markers).inserted {
+                                let sample = "[ScanDiag] stage=wallet_shape markers=\(markers) length=\(lineStr.utf8.count)"
+                                DispatchQueue.main.async { AppViewModel.shared?.log.append(sample) }
+                            }
+                        }
+                        let now = ProcessInfo.processInfo.systemUptime
+                        if context.total == 1 || now - context.lastReport >= 2 {
+                            context.lastReport = now
+                            let summary = context.summary
+                            let status = context.status
+                            DispatchQueue.main.async {
+                                guard let vm = AppViewModel.shared, vm.activeCardScanID == scanID else { return }
+                                vm.log.append(summary)
+                                vm.scanStatusText = status
                             }
                         }
                     },
@@ -422,9 +486,12 @@ final class AppViewModel: ObservableObject {
 
             let errStr = outError.flatMap { String(validatingUTF8: $0) }
             if let p = outError { al_string_free(p) }
+            let summary = context.summary
 
             DispatchQueue.main.async {
                 guard let vm = AppViewModel.shared else { return }
+                vm.log.append(summary)
+                vm.log.append("[ScanDiag] stage=worker event=returned rc=\(rc) error=\(errStr ?? "none")")
                 vm.cardScanWorkerRunning = false
                 vm.endCardScanBackgroundTask()
                 guard vm.activeCardScanID == scanID else { return }
@@ -448,6 +515,7 @@ final class AppViewModel: ObservableObject {
     }
 
     func stopCardScanning() {
+        log.append("[ScanDiag] stage=ui event=stop_requested")
         activeCardScanID = nil
         al_syslog_stream_stop()
         endCardScanBackgroundTask()
@@ -466,7 +534,7 @@ final class AppViewModel: ObservableObject {
         cardScanBackgroundTask = .invalid
     }
 
-    nonisolated static func firstCardID(in line: String) -> String? {
+    nonisolated static func firstCardID(in line: String, diagnostics: CardScanContext? = nil) -> String? {
         let lower = line.lowercased()
         let isWalletSubsystem = lower.contains("passd") ||
                                 lower.contains("passbook") ||
@@ -480,6 +548,8 @@ final class AppViewModel: ObservableObject {
                                 lower.contains("/cards/")
 
         guard isWalletSubsystem else { return nil }
+        diagnostics?.wallet += 1
+        if lower.contains("<private>") { diagnostics?.privateWallet += 1 }
 
         let isWalletContext = lower.contains("card") ||
                               lower.contains("pass") ||
@@ -496,14 +566,25 @@ final class AppViewModel: ObservableObject {
                               lower.contains("/cards/")
 
         guard isWalletContext else { return nil }
+        diagnostics?.walletContext += 1
 
-        for regex in Self.cardRegexes {
+        for (index, regex) in Self.cardRegexes.enumerated() {
             let matches = regex.matches(in: line, range: NSRange(line.startIndex..., in: line))
             for m in matches {
                 if m.numberOfRanges > 1, let r = Range(m.range(at: 1), in: line) {
                     let candidateRaw = String(line[r])
-                    guard let candidate = CardItem.cleanCardId(candidateRaw) else { continue }
-                    if Self.dummyCardHashes.contains(candidate) { continue }
+                    diagnostics?.candidates += 1
+                    guard let candidate = CardItem.cleanCardId(candidateRaw) else {
+                        diagnostics?.invalid += 1
+                        continue
+                    }
+                    if candidate != candidateRaw { diagnostics?.normalized += 1 }
+                    if Self.dummyCardHashes.contains(candidate) {
+                        diagnostics?.dummy += 1
+                        continue
+                    }
+                    diagnostics?.matches += 1
+                    diagnostics?.matchedRule = index + 1
                     return candidate
                 }
             }
@@ -512,18 +593,43 @@ final class AppViewModel: ObservableObject {
     }
 
     private func acceptScannedCard(_ candidate: String, scanID: UUID) {
-        guard activeCardScanID == scanID, isScanningCards else { return }
-        if !cards.contains(where: { $0.id == candidate }) {
+        guard activeCardScanID == scanID, isScanningCards else {
+            log.append("[ScanDiag] stage=accept event=ignored_stale_session")
+            return
+        }
+        let duplicate = cards.contains(where: { $0.id == candidate })
+        log.append("[ScanDiag] stage=accept event=begin duplicate=\(duplicate) id_length=\(candidate.count)")
+        if !duplicate {
             cards.append(CardItem(id: candidate, isSelected: true))
         }
         saveCards()
+        let saved = UserDefaults.standard.stringArray(forKey: "aircard.cards")?.contains(candidate) == true
+        log.append("[ScanDiag] stage=save event=readback contains_card=\(saved) cards=\(cards.count)")
         activeCardScanID = nil
         isScanningCards = false
         al_syslog_stream_stop()
         selectedTab = .walletCards
+        log.append("[ScanDiag] stage=navigation event=wallet_tab_selected")
         scanStatusText = "Card saved: \(candidate)"
         log.append("Found card: \(candidate)")
         UIImpactFeedbackGenerator(style: .heavy).impactOccurred()
+    }
+
+    private func updateScannerStage(from line: String) {
+        guard isScanningCards, activeCardScanID != nil, line.contains("[ScanDiag]") else { return }
+        if line.contains("stage=rsd_checkin") {
+            if line.contains("event=wait_checkin_reply") { scanStatusText = "等待 RSD Checkin 回复…" }
+            else if line.contains("event=wait_start_service_reply") { scanStatusText = "等待 StartService 回复…" }
+            else if line.contains("event=begin") { scanStatusText = "正在进行日志服务握手…" }
+        } else if line.contains("stage=service_socket event=begin") {
+            scanStatusText = "正在连接日志服务端口…"
+        } else if line.contains("stage=tunnel event=begin") {
+            scanStatusText = "正在建立设备隧道…"
+        } else if line.contains("stage=service event=begin") {
+            scanStatusText = "正在启动日志服务…"
+        } else if line.contains("stage=read event=begin") {
+            scanStatusText = "日志服务已连接，等待数据…"
+        }
     }
 
     nonisolated static func cardImagePath(for cardId: String) -> URL {

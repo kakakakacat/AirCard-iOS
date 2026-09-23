@@ -1,0 +1,12 @@
+[package]
+name = "aircard-scan-diagnostic-tests"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+tokio = { version = "1", features = ["io-util", "macros", "rt", "time", "test-util"] }
+tracing = "0.1"
+
+[lib]
+path = "../../rust-core/src/scan_diagnostics.rs"
