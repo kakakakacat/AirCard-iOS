@@ -36,6 +36,6 @@ jobs:
           ./build-ipa.sh Release
       - uses: actions/upload-artifact@v4
         with:
-          name: AirCard-iOS-scan-diagnostics-unsigned
+          name: AirCard-iOS-scan-structure-v2-unsigned
           path: build/AirCard-iOS.ipa
           if-no-files-found: error

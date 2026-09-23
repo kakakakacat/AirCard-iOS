@@ -22,6 +22,7 @@ final class CardScanContext: @unchecked Sendable {
     var matchedRule = 0
     var lastReport = ProcessInfo.processInfo.systemUptime
     var sampledSignatures: Set<String> = []
+    var sampledStructures: Set<String> = []
 
     var summary: String {
         "[ScanDiag] session=\(id.uuidString.prefix(8)) stage=parser total=\(total) prefilter=\(prefiltered) wallet=\(wallet) context=\(walletContext) private=\(privateWallet) candidates=\(candidates) invalid=\(invalid) dummy=\(dummy) normalized=\(normalized) matches=\(matches) rule=\(matchedRule)"
@@ -371,6 +372,13 @@ final class AppViewModel: ObservableObject {
         "hwAtAmHKYwsQrJbT5cTNDsaxVME="
     ]
 
+    nonisolated private static let diagnosticKeyRegex = try! NSRegularExpression(
+        pattern: #"(?i)\b(uniqueid|passidentifier|identifier|serialnumber|primaryaccountidentifier|deviceaccountidentifier|persistentidentifier)\b[^A-Za-z0-9<]{0,12}(<private>|[A-Za-z0-9+/_=-]{4,128})"#
+    )
+    nonisolated private static let diagnosticTokenRegex = try! NSRegularExpression(
+        pattern: #"(?<![A-Za-z0-9])([A-Za-z0-9+/_=-]{16,96})(?![A-Za-z0-9])"#
+    )
+
     func startCardScanning() {
         guard !isScanningCards else { return }
         guard !cardScanWorkerRunning else {
@@ -412,7 +420,7 @@ final class AppViewModel: ObservableObject {
             scanStatusText = "Connecting to device logs..."
         }
         log.append("Started live card scanner…")
-        log.append("[ScanDiag] build=scan-diag-v1 session=\(scanID.uuidString.prefix(8)) stage=ui event=start ios=\(UIDevice.current.systemVersion) saved_cards=\(cards.count) background_granted=\(cardScanBackgroundTask != .invalid)")
+        log.append("[ScanDiag] build=scan-diag-v2 session=\(scanID.uuidString.prefix(8)) stage=ui event=start ios=\(UIDevice.current.systemVersion) saved_cards=\(cards.count) background_granted=\(cardScanBackgroundTask != .invalid)")
 
         let pairingPath = PairingController.pairingFilePath()
 
@@ -465,6 +473,14 @@ final class AppViewModel: ObservableObject {
                             if context.sampledSignatures.count < 12 && context.sampledSignatures.insert(markers).inserted {
                                 let sample = "[ScanDiag] stage=wallet_shape markers=\(markers) length=\(lineStr.utf8.count)"
                                 DispatchQueue.main.async { AppViewModel.shared?.log.append(sample) }
+                            }
+                            if context.sampledStructures.count < 80 {
+                                for sample in AppViewModel.diagnosticStructures(in: lineStr) {
+                                    guard context.sampledStructures.count < 80 else { break }
+                                    if context.sampledStructures.insert(sample).inserted {
+                                        DispatchQueue.main.async { AppViewModel.shared?.log.append(sample) }
+                                    }
+                                }
                             }
                         }
                         let now = ProcessInfo.processInfo.systemUptime
@@ -590,6 +606,73 @@ final class AppViewModel: ObservableObject {
             }
         }
         return nil
+    }
+
+    /// Describes identifier-shaped values without writing their original bytes to the Activity Log.
+    nonisolated private static func diagnosticStructures(in line: String) -> [String] {
+        let fullRange = NSRange(line.startIndex..., in: line)
+        var results: [String] = []
+        var keyedRanges: [NSRange] = []
+
+        for match in diagnosticKeyRegex.matches(in: line, range: fullRange) {
+            guard match.numberOfRanges > 2,
+                  let keyRange = Range(match.range(at: 1), in: line),
+                  let valueRange = Range(match.range(at: 2), in: line) else { continue }
+            let key = line[keyRange].lowercased()
+            let value = String(line[valueRange])
+            results.append("[ScanDiag] stage=id_shape source=key key=\(key) \(diagnosticShape(of: value))")
+            keyedRanges.append(match.range(at: 2))
+        }
+
+        for match in diagnosticTokenRegex.matches(in: line, range: fullRange) {
+            guard match.numberOfRanges > 1,
+                  !keyedRanges.contains(where: { NSIntersectionRange($0, match.range(at: 1)).length > 0 }),
+                  let tokenRange = Range(match.range(at: 1), in: line) else { continue }
+            let token = String(line[tokenRange])
+            let lower = token.lowercased()
+            if lower.contains("application") || lower.contains("com.apple") || lower.contains("passbookui") || lower.contains("paymentservices") {
+                continue
+            }
+            results.append("[ScanDiag] stage=id_shape source=token \(diagnosticShape(of: token))")
+        }
+        return Array(results.prefix(8))
+    }
+
+    nonisolated private static func diagnosticShape(of raw: String) -> String {
+        if raw.lowercased() == "<private>" {
+            return "kind=private len=0"
+        }
+        let scalars = raw.unicodeScalars
+        let upper = scalars.filter { CharacterSet.uppercaseLetters.contains($0) }.count
+        let lower = scalars.filter { CharacterSet.lowercaseLetters.contains($0) }.count
+        let digits = scalars.filter { CharacterSet.decimalDigits.contains($0) }.count
+        let dash = raw.filter { $0 == "-" }.count
+        let slash = raw.filter { $0 == "/" }.count
+        let plus = raw.filter { $0 == "+" }.count
+        let padding = raw.filter { $0 == "=" }.count
+        let kind: String
+        if digits == raw.count {
+            kind = "digits"
+        } else if raw.range(of: #"^[0-9A-Fa-f]{16,}$"#, options: .regularExpression) != nil {
+            kind = "hex"
+        } else if raw.range(of: #"^[0-9A-Fa-f]{8}-[0-9A-Fa-f-]{27,}$"#, options: .regularExpression) != nil {
+            kind = "uuid"
+        } else if raw.range(of: #"^[A-Za-z0-9+/_-]+={0,2}$"#, options: .regularExpression) != nil {
+            kind = "base64ish"
+        } else {
+            kind = "mixed"
+        }
+        let fingerprint = kind == "digits" ? "hidden" : String(format: "%016llx", diagnosticFingerprint(raw))
+        return "kind=\(kind) len=\(raw.utf8.count) upper=\(upper) lower=\(lower) digits=\(digits) dash=\(dash) slash=\(slash) plus=\(plus) padding=\(padding) fp=\(fingerprint)"
+    }
+
+    nonisolated private static func diagnosticFingerprint(_ value: String) -> UInt64 {
+        var hash: UInt64 = 14695981039346656037
+        for byte in value.utf8 {
+            hash ^= UInt64(byte)
+            hash &*= 1099511628211
+        }
+        return hash
     }
 
     private func acceptScannedCard(_ candidate: String, scanID: UUID) {
