@@ -827,8 +827,16 @@ struct WalletCardView: View {
                 ))
                 .labelsHidden()
 
-                Text("Card #\(cardIndex + 1)")
-                    .font(.system(size: 13, weight: .semibold))
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(card.displayName ?? "Card #\(cardIndex + 1)")
+                        .font(.system(size: 13, weight: .semibold))
+                        .lineLimit(1)
+                    if card.displayName != nil {
+                        Text("Card #\(cardIndex + 1)")
+                            .font(.system(size: 9))
+                            .foregroundStyle(.secondary)
+                    }
+                }
 
                 // Monospace Hash Pill with Copy Button
                 HStack(spacing: 4) {
@@ -1083,7 +1091,7 @@ struct WalletCardsTab: View {
                 HStack {
                     if vm.isScanningCards {
                         ProgressView().scaleEffect(0.85)
-                        Text("Live Scanner Active")
+                        Text("Wallet Detection Active")
                             .font(.subheadline.bold())
                             .foregroundStyle(.blue)
                     } else {
@@ -1208,19 +1216,19 @@ struct WalletCardsTab: View {
                     Text("1.")
                         .bold()
                         .foregroundStyle(.blue)
-                    Text("Tap **Scan Cards** in the toolbar above.")
+                    Text("Tap **Scan Cards**. AirCard will first read and verify Wallet metadata automatically.")
                 }
                 HStack(alignment: .top, spacing: 10) {
                     Text("2.")
                         .bold()
                         .foregroundStyle(.blue)
-                    Text("On this iPhone, **double-click the Side button** (Apple Pay), authenticate with **Face ID**, and **tap your card**.")
+                    Text("Only if metadata access fails, double-click the Side button, authenticate, and tap the card for the legacy log scanner.")
                 }
                 HStack(alignment: .top, spacing: 10) {
                     Text("3.")
                         .bold()
                         .foregroundStyle(.blue)
-                    Text("Your card will appear here automatically!")
+                    Text("Verified cards are saved here automatically; no repeated scan is required.")
                 }
             }
             .font(.subheadline)

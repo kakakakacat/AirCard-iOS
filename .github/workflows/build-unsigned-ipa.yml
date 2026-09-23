@@ -16,6 +16,8 @@ jobs:
           fetch-depth: 0
       - name: Select Xcode
         run: sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
+      - name: Install XcodeGen
+        run: brew install xcodegen
       - name: Verify scanner parity with original main
         run: python3 tests/verify_scanner.py
       - name: Install Rust
@@ -36,6 +38,6 @@ jobs:
           ./build-ipa.sh Release
       - uses: actions/upload-artifact@v4
         with:
-          name: AirCard-iOS-scan-structure-v2-unsigned
+          name: AirCard-iOS-wallet-db-v1-unsigned
           path: build/AirCard-iOS.ipa
           if-no-files-found: error

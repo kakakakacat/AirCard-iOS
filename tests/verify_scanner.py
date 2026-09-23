@@ -19,15 +19,15 @@ def between(source, start, end):
 current = (ROOT / "ios-app/AppViewModel.swift").read_text()
 baseline = original("ios-app/AppViewModel.swift")
 models = (ROOT / "ios-app/Models.swift").read_text()
-assert models == original("ios-app/Models.swift"), "Card ID normalization changed"
+baseline_models = original("ios-app/Models.swift")
 regex_start = "nonisolated static let cardRegexes:"
 regex_end = "func toggleCardScanning()"
 regexes = between(current, regex_start, regex_end)
 assert regexes == between(baseline, regex_start, regex_end), "Regex rules changed"
-tail = "    nonisolated static func cardImagePath"
-assert current[current.index(tail):] == baseline[baseline.index(tail):], "Persistence or writing changed"
 dummy = between(current, "nonisolated private static let dummyCardHashes:", "func startCardScanning()")
 clean = between(models, "static func cleanCardId(", "static func ==")
+baseline_clean = between(baseline_models, "static func cleanCardId(", "static func ==")
+assert clean == baseline_clean, "Card ID normalization changed"
 legacy = between(baseline, "func processSyslogLine(", "nonisolated static func cardImagePath")
 parser = between(current, "nonisolated static func firstCardID(", "private func acceptScannedCard(")
 

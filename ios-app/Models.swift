@@ -8,6 +8,7 @@ import CoreTransferable
 
 struct CardItem: Identifiable, Equatable {
     let id: String
+    var displayName: String? = nil
     var isSelected: Bool = true
     var customImageData: Data? = nil  // Primary PNG data (1536x969)
     var customImage: UIImage? = nil   // Fast cached UIImage for display
@@ -41,6 +42,7 @@ struct CardItem: Identifiable, Equatable {
 
     static func == (lhs: CardItem, rhs: CardItem) -> Bool {
         lhs.id == rhs.id &&
+        lhs.displayName == rhs.displayName &&
         lhs.isSelected == rhs.isSelected &&
         lhs.customImage === rhs.customImage &&
         (lhs.customImageData?.count == rhs.customImageData?.count)

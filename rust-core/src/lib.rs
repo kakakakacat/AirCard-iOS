@@ -5,6 +5,7 @@
 //!   al_pairing_run_host    — RPPairing host (blocks until paired)
 //!   al_pairing_result_free — free the ALPairResult heap strings
 //!   al_exploit_run         — run the AirTraffic exploit over the loopback tunnel
+//!   al_exploit_read_file   — export one known absolute device path into the app sandbox
 //!   al_string_free         — free any char* returned by this library
 
 use std::ffi::{c_char, c_void};
@@ -108,6 +109,39 @@ pub unsafe extern "C" fn al_exploit_run(
         Err(e) => {
             if !out_error.is_null() {
                 *out_error = ffi_util::cstr(format!("Rust panic in al_exploit_run: {e:?}"));
+            }
+            1
+        }
+    }
+}
+
+/// Export one existing file at a known absolute device path into a local app path.
+///
+/// This is intentionally a file-only primitive; it does not enumerate directories.
+#[no_mangle]
+pub unsafe extern "C" fn al_exploit_read_file(
+    pairing_path: *const c_char,
+    source_path: *const c_char,
+    destination_path: *const c_char,
+    log_cb: exploit::ALLogCallback,
+    ctx: *mut c_void,
+    out_error: *mut *mut c_char,
+) -> i32 {
+    let res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        exploit::read_file(
+            pairing_path,
+            source_path,
+            destination_path,
+            log_cb,
+            ctx,
+            out_error,
+        )
+    }));
+    match res {
+        Ok(rc) => rc,
+        Err(e) => {
+            if !out_error.is_null() {
+                *out_error = ffi_util::cstr(format!("Rust panic in al_exploit_read_file: {e:?}"));
             }
             1
         }
@@ -386,4 +420,3 @@ pub unsafe extern "C" fn al_device_respring(
         }
     }
 }
-
